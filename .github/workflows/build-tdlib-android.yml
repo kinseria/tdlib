@@ -2,19 +2,20 @@ name: Build TDLib Android AAR
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
-  build:
+  build-tdlib:
     runs-on: ubuntu-22.04
+
+    env:
+      NDK_VERSION: 26.1.10909125
+      TD_VERSION: master
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install packages
         run: |
           sudo apt update
           sudo apt install -y \
@@ -22,69 +23,110 @@ jobs:
             cmake \
             ninja-build \
             unzip \
-            openjdk-17-jdk \
-            wget
+            zip
 
-      - name: Install Android NDK
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup NDK
+      - name: Install NDK
         run: |
-          sdkmanager "ndk;26.1.10909125"
+          sdkmanager "ndk;${NDK_VERSION}"
+
+      - name: Set NDK path
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> $GITHUB_ENV
+
 
       - name: Clone TDLib
         run: |
-          git clone --depth=1 https://github.com/tdlib/td.git
+          git clone \
+            --depth 1 \
+            --branch ${TD_VERSION} \
+            https://github.com/tdlib/td.git
 
-      - name: Build TDLib
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+
+      ##################################################
+      # Build each Android ABI
+      ##################################################
+
+      - name: Build arm64-v8a
         run: |
-          mkdir td/build
-          cd td/build
+          ./build-android.sh arm64-v8a
 
-          cmake .. \
-            -GNinja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DTD_ENABLE_JNI=ON \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-21
 
-          ninja
-
-      - name: Create AAR structure
+      - name: Build armeabi-v7a
         run: |
-          mkdir -p aar/jni/arm64-v8a
+          ./build-android.sh armeabi-v7a
+
+
+      - name: Build x86_64
+        run: |
+          ./build-android.sh x86_64
+
+
+      ##################################################
+      # Package AAR
+      ##################################################
+
+      - name: Create AAR folders
+        run: |
+          mkdir -p aar/jni
           mkdir -p aar/classes
 
-          cp td/build/lib/libtdjni.so \
-             aar/jni/arm64-v8a/
 
-          cp -r td/td/telegram \
+      - name: Copy native libraries
+        run: |
+          cp -r output/arm64-v8a \
+             aar/jni/
+
+          cp -r output/armeabi-v7a \
+             aar/jni/
+
+          cp -r output/x86_64 \
+             aar/jni/
+
+
+      - name: Copy Java sources
+        run: |
+          cp -r td/example/android/tdlib/src/main/java/* \
              aar/classes/
 
-      - name: Build classes.jar
+
+      - name: Compile Java
         run: |
           cd aar/classes
+
+          mkdir -p ../../classes
 
           javac \
             -source 8 \
             -target 8 \
-            $(find . -name "*.java")
+            $(find . -name "*.java") \
+            -d ../../classes
 
-          jar cf ../classes.jar .
+
+      - name: Create classes.jar
+        run: |
+          cd classes
+          jar cf ../aar/classes.jar .
+
 
       - name: Create TDLib.aar
         run: |
           cd aar
-
           zip -r TDLib.aar \
             classes.jar \
             jni/
 
+
       - name: Upload TDLib.aar
         uses: actions/upload-artifact@v4
         with:
-          name: TDLib-Android
+          name: TDLib-aar
           path: aar/TDLib.aar
