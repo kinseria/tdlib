@@ -49,8 +49,21 @@ jobs:
     - name: Clone TDLib
       run: |
         git clone \
-          --depth=1 \
-          https://github.com/tdlib/td.git
+        --recursive \
+        https://github.com/tdlib/td.git
+
+
+    - name: Generate TDLib sources
+      run: |
+        mkdir -p td/build-generation
+
+        cmake -S td \
+          -B td/build-generation \
+          -GNinja \
+          -DCMAKE_BUILD_TYPE=Release
+
+        cmake --build td/build-generation --target generate
+
 
 
     #
